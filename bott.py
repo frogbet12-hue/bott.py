@@ -147,8 +147,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
     print("🤖 Bot is running... Press Ctrl+C to stop.")
-    
-  application.run_polling(close_loop=False)
+     application.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     main()
