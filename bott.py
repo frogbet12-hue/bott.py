@@ -1,85 +1,58 @@
+import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from flask import Flask, request
 
-# تفعيل نظام تسجيل الأخطاء (Logging)
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# إعداد السجلات (Logs)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# اسم البوت الخاص بك
-BOT_USERNAME = "@Gta2027_bot"
+# دمج التوكن والـ Username مباشرة في الكود
+TOKEN = "9279252211:AAFO3K3UYYfBb2GgouEzStiVEPcYu8mDzug"
+BOT_USERNAME = "Gta2027_bot"
 
-# 🎬 قائمة الأفلام والروابط (يمكنك تعديل الأسماء والروابط أو إضافة المزيد هنا)
-MOVIES_DATABASE = {
-    "فيلم الرسالة": "https://youtube.com🍿_رابط_الفيلم_هنا",
-    "فيلم عمر المختار": "https://youtube.com🍿_رابط_الفيلم_هنا",
-    "فيلم وثائقي عن الفضاء": "https://youtube.com🍿_رابط_الفيلم_هنا",
-    "the matrix": "https://youtube.com🍿_رابط_الفيلم_هنا",
-}
+# جلب رابط Render (يجب إضافته في إعدادات Render باسم RENDER_URL)
+RENDER_URL = os.getenv("RENDER_URL") 
 
-# 1. الاستجابة لأمر /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.message.from_user
-    first_name = user.first_name
-    
-    print(f" New User Started Bot -> ID: {user.id} | Name: {first_name}")
-    
-    # رسالة الترحيب وقائمة الأفلام المتوفرة
-    available_movies = "\n".join([f"• {title}" for title in MOVIES_DATABASE.keys()])
-    
-    await update.message.reply_text(
-        f"👋 أهلاً بك في {BOT_USERNAME}، يا {first_name}!\n\n"
-        f"🎬 أرسل لي اسم الفيلم الذي تبحث عنه وسأعطيك رابط المشاهدة.\n\n"
-        f"🍿 **الأفلام المتوفرة حالياً:**\n{available_movies}"
-    )
+# إعداد Flask وتطبيق التلغرام
+app = Flask(__name__)
+tg_app = Application.builder().token(TOKEN).build()
 
-# 2. التعامل مع بحث المستخدم عن الأفلام
-async def handle_movie_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    movie_name = update.message.text.strip()
-    user = update.message.from_user
+# دالة أمر /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"أهلاً بك! أنا بوت تلغرام (@{BOT_USERNAME}) أعمل على منصة Render.")
+
+# دالة للرد على الرسائل النصية
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"لقد قلت: {update.message.text}")
+
+# إضافة الأوامر والمستمعين
+tg_app.add_handler(CommandHandler("start", start))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+# مسار استقبال تحديثات الـ Webhook
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), tg_app.bot)
+        tg_app.create_task(tg_app.process_update(update))
+        return "OK", 200
+
+@app.route('/')
+def index():
+    return f"البوت @{BOT_USERNAME} يعمل بنجاح!"
+
+if __name__ == '__main__':
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(tg_app.initialize())
     
-    print(f"🔍 User {user.first_name} searched for: {movie_name}")
-    
-    # البحث عن الفيلم (تجاهل حالة الأحرف الكبيرة والصغيرة للأفلام الإنجليزية)
-    found_movie = None
-    for title in MOVIES_DATABASE.keys():
-        if movie_name.lower() == title.lower():
-            found_movie = title
-            break
-            
-    if found_movie:
-        # إذا تم العثور على الفيلم، أرسل الرابط
-        movie_link = MOVIES_DATABASE[found_movie]
-        response_text = (
-            f"🍿 **تم العثور على الفيلم!**\n\n"
-            f"🎬 **الاسم:** {found_movie}\n"
-            f"🔗 **رابط المشاهدة على يوتيوب:**\n{movie_link}"
-        )
+    # ربط الـ Webhook تلقائياً عند تشغيل السيرفر إذا كان رابط ريندر موجوداً
+    if RENDER_URL:
+        loop.run_until_complete(tg_app.bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}"))
+        logging.info(f"Webhook set successfully to: {RENDER_URL}/{TOKEN}")
     else:
-        # إذا لم يتم العثور على الفيلم
-        available_movies = "\n".join([f"• {title}" for title in MOVIES_DATABASE.keys()])
-        response_text = (
-            f"❌ عذراً، فيلم *{movie_name}* غير متوفر حالياً.\n\n"
-            f"💡 **الأفلام المتوفرة لدينا هي:**\n{available_movies}"
-        )
-    
-    await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=False)
-
-def main():
-    # 🚨 ضع التوكن السري الخاص بك من BotFather هنا بين القوسين
-    TOKEN="9279252211:AAFO3K3UYYfBb2GgouEzStiVEPcYu8mDzug"
-    
-    # بناء التطبيق
-    application = Application.builder().token(TOKEN).build()
-
-    # تسجيل الأوامر والرسائل
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_movie_search))
-
-    # تشغيل البوت
-    print(f"{BOT_USERNAME} is running...")
-    application.run_polling()
-
-if __name__ == "__main__":
-    main()
+        logging.warning("RENDER_URL environment variable is missing!")
+        
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
