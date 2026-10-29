@@ -1,58 +1,188 @@
+#!/usr/bin/env python3
+"""
+Telegram Bot - Render-Ready Version with Micropip support for online testing
+Works with run_polling() OR webhook (Render.com)
+Environment variables: BOT_TOKEN, WEBHOOK_URL, ADMIN_IDS
+"""
+
 import os
 import logging
+import sys
+
+# ----------- MICROPIP (ONLINE PYTHON) AUTOMATION -----------
+# التحقق مما إذا كان الكود يعمل داخل المتصفح لتثبيت المكتبات تلقائياً
+if 'pyodide' in sys.modules or os.name == 'posix' and not os.path.exists('/bin'):
+    try:
+        import micropip
+        import asyncio
+        async def install_packages():
+            # تثبيت المكتبات المطلوبة للبوت داخل بيئة المتصفح
+            await micropip.install("python-telegram-bot", keep_going=True)
+            await micropip.install("httpx", keep_going=True)
+        asyncio.get_event_loop().run_until_complete(install_packages())
+    except Exception as e:
+        print(f"Micropip setup skipped or failed: {e}")
+
+# ---------------- TELEGRAM IMPORTS ----------------
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from flask import Flask, request
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-# إعداد السجلات (Logs)
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# ---------------- LOGGING ----------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-# دمج التوكن والـ Username مباشرة في الكود
-TOKEN = "9279252211:AAFO3K3UYYfBb2GgouEzStiVEPcYu8mDzug"
-BOT_USERNAME = "Gta2027_bot"
+# ---------------- CONFIG from ENV ----------------
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9279252211:AAFO3K3UYYfBb2GgouEzStiVEPcYu8mDzug")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "123456789").split(",")]
+USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8080"))
 
-# جلب رابط Render (يجب إضافته في إعدادات Render باسم RENDER_URL)
-RENDER_URL = os.getenv("RENDER_URL") 
+# ---------------- HELPER ----------------
+def get_admin_filter():
+    async def filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        return update.effective_user.id in ADMIN_IDS
+    return filter
 
-# إعداد Flask وتطبيق التلغرام
-app = Flask(__name__)
-tg_app = Application.builder().token(TOKEN).build()
 
-# دالة أمر /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"أهلاً بك! أنا بوت تلغرام (@{BOT_USERNAME}) أعمل على منصة Render.")
+# ---------------- COMMANDS ----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start command"""
+    welcome = (
+        "👋 *Welcome to Gta2027_bot!* \n\n"
+        "I am your trading assistant bot.\n\n"
+        "*Commands:*\n"
+        "/help — show this help\n"
+        "/price — get crypto price (BTC/USDT)\n"
+        "/add <amount> — add funds (demo)\n"
+        "/balance — check your balance\n"
+        "/trade <coin> — quick trade demo\n"
+        "/ping — check if bot is alive\n\n"
+        "Type /help any time!"
+    )
+    await update.message.reply_text(welcome, parse_mode="Markdown")
 
-# دالة للرد على الرسائل النصية
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"لقد قلت: {update.message.text}")
 
-# إضافة الأوامر والمستمعين
-tg_app.add_handler(CommandHandler("start", start))
-tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "/start — greet the bot\n"
+        "/help — this help\n"
+        "/price — BTC/USDT demo price\n"
+        "/add <amount> — demo deposit\n"
+        "/balance — your demo balance\n"
+        "/trade <coin> — quick trade demo\n"
+        "/ping — alive check",
+        parse_mode="Markdown",
+    )
 
-# مسار استقبال تحديثات الـ Webhook
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), tg_app.bot)
-        tg_app.create_task(tg_app.process_update(update))
-        return "OK", 200
 
-@app.route('/')
-def index():
-    return f"البوت @{BOT_USERNAME} يعمل بنجاح!"
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("pong 🏓")
 
-if __name__ == '__main__':
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(tg_app.initialize())
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Return a demo/live-ish crypto price (fetches from Binance public API)"""
+    import httpx
+
+    if httpx:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+                    timeout=5.0,
+                )
+                data = resp.json()
+                price_val = float(data.get("price", 0))
+                await update.message.reply_text(
+                    f"📈 BTC/USDT = ${price_val:,.2f}\n"
+                    f"(from Binance public API)",
+                    parse_mode="Markdown",
+                )
+                return
+        except Exception as e:
+            logger.warning(f"Binance API failed: {e}")
+    # Fallback demo value
+    await update.message.reply_text("📈 BTC/USDT = $62,000.00 (demo value)")
+
+
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        amount = float(context.args[0]) if context.args and context.args[0].replace(".", "").isdigit() else 100
+    except Exception:
+        amount = 100
     
-    # ربط الـ Webhook تلقائياً عند تشغيل السيرفر إذا كان رابط ريندر موجوداً
-    if RENDER_URL:
-        loop.run_until_complete(tg_app.bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}"))
-        logging.info(f"Webhook set successfully to: {RENDER_URL}/{TOKEN}")
+    context.user_data["balance"] = context.user_data.get("balance", 0) + amount
+    await update.message.reply_text(
+        f"✅ +${amount:,.2f} added to your demo balance!\n"
+        f"Total: ${context.user_data['balance']:,.2f}",
+        parse_mode="Markdown",
+    )
+
+
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    b = context.user_data.get("balance", 0)
+    await update.message.reply_text(f"💰 Your demo balance: ${b:,.2f} USDT", parse_mode="Markdown")
+
+
+async def trade(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    coin = context.args[0].upper() if context.args else "BTC"
+    b = context.user_data.get("balance", 0)
+    if b < 100:
+        await update.message.reply_text("❌ Insufficient balance! Use /add first.")
+        return
+    context.user_data["balance"] -= 100
+    context.user_data[f"holdings_{coin}"] = context.user_data.get(f"holdings_{coin}", 0) + 1
+    await update.message.reply_text(
+        f"✅ Bought 1 {coin}\n"
+        f"Remaining balance: ${context.user_data['balance']:,.2f} USDT\n"
+        f"Holdings: {context.user_data.get(f'holdings_{coin}', 1)} {coin}",
+        parse_mode="Markdown",
+    )
+
+
+# ---------------- MESSAGE HANDLER ----------------
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        f"You said: {update.message.text}\n"
+        "Try /help to see available commands.",
+        parse_mode="Markdown",
+    )
+
+
+# ---------------- MAIN ----------------
+def main() -> None:
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("price", price))
+    application.add_handler(CommandHandler("add", add))
+    application.add_handler(CommandHandler("balance", balance))
+    application.add_handler(CommandHandler("trade", trade))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+    if USE_WEBHOOK and WEBHOOK_URL:
+        logger.info(f"Starting webhook mode on {WEBHOOK_URL}")
+        application.run_webhook(
+            listen=WEBHOOK_HOST,
+            port=WEBHOOK_PORT,
+            webhook_url=WEBHOOK_URL,
+        )
     else:
-        logging.warning("RENDER_URL environment variable is missing!")
-        
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+        logger.info("🤖 Bot is running in polling mode... Press Ctrl+C to stop.")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+ 
+if __name__ == "__main__":
+    main()
